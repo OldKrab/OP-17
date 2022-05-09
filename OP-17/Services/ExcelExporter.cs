@@ -2,8 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using OfficeOpenXml;
-using OfficeOpenXml.Style;
+using ClosedXML.Excel;
 using OP_17.ViewModels;
 
 namespace OP_17.Services;
@@ -17,10 +16,10 @@ public class ExcelExporter
         if (fileName == "")
             fileName = GenerateFileName();
         CreateAndOpenFile();
+
         FillFields(mainVM);
-        _sheet.Cells.AutoFitColumns();
-        _package.SaveAs(new FileInfo(fileName));
-        _package.Dispose();
+        _workbook.SaveAs(fileName);
+        _workbook.Dispose();
         return fileName;
     }
 
@@ -73,7 +72,7 @@ public class ExcelExporter
 
     private void FillDish(DishViewModel dishVM, int row)
     {
-        var rowCells = GetMergedCells(_sheet.Cells[row, 1, row, 81]).ToList();
+        var rowCells = GetMergedCells(_sheet.Range($"A{row}:CC{row}")).ToList();
         rowCells[0].Value = dishVM.Card;
         rowCells[1].Value = dishVM.Name;
         rowCells[2].Value = dishVM.Code;
@@ -92,9 +91,7 @@ public class ExcelExporter
     private void CreateAndOpenFile()
     {
         var templateFile = new FileInfo(TemplateFile);
-
-        _package = new ExcelPackage(templateFile);
-        _workbook = _package.Workbook;
+        _workbook = new XLWorkbook(TemplateFile);
         _sheet = _workbook.Worksheets.First();
 
         _fields["companyName"] = GetField("A6");
@@ -108,7 +105,7 @@ public class ExcelExporter
         _fields["endDate"] = GetField("BS13");
         _fields["products"] = GetField("AS18:CF19");
         _fields["salesDates"] = GetField("R18:AD19");
-        _fields["salesDates"].Style.Numberformat.Format = "dd.mm";
+        _fields["salesDates"].Style.NumberFormat.Format = "dd.mm";
 
         _fields["summarySales"] = GetField("R37:AD37");
         _fields["summaryAllSales"] = GetField("AG37");
@@ -123,36 +120,25 @@ public class ExcelExporter
 
     }
 
-    private ExcelRange GetField(string fieldAddr, ExcelHorizontalAlignment horizontalAlignment = ExcelHorizontalAlignment.Center)
+    private IXLRange GetField(string fieldAddr, XLAlignmentHorizontalValues horizontalAlignment = XLAlignmentHorizontalValues.Center)
     {
-        var field = _sheet.Cells[fieldAddr];
-        field.Style.HorizontalAlignment = horizontalAlignment;
+        var field = _sheet.Range(fieldAddr);
+        field.Style.Alignment.Horizontal = horizontalAlignment;
         return field;
     }
 
-    private IEnumerable<ExcelRange> GetMergedCells(ExcelRange range)
+    private IEnumerable<IXLRange> GetMergedCells(IXLRange range)
     {
-        return _sheet.MergedCells.Select(mc => _sheet.Cells[mc])
-             .Where(mc => range.Select(c => c.FullAddress)
-                 .Intersect(mc.Select(c => c.FullAddress)).Count() != 0).OrderBy(c => c.Start, new ExcelCellComparer());
+        var rangeCells = range.Cells().ToList();
+        var mergedRanges =  _sheet.MergedRanges.Where(mc => rangeCells.Intersect(mc.Cells()).Count() != 0).ToList();
+        var notMergedRanges = rangeCells.Except(mergedRanges.SelectMany(mc => mc.Cells())).Select(c=>c.AsRange());
+        return mergedRanges.Concat(notMergedRanges).OrderBy(r=>r.RangeAddress.FirstAddress.ColumnNumber);
     }
 
 
-    private ExcelPackage _package = null!;
-    private ExcelWorkbook _workbook = null!;
-    private ExcelWorksheet _sheet = null!;
-    private readonly Dictionary<string, ExcelRange> _fields = new();
+    private XLWorkbook _workbook = null!;
+    private IXLWorksheet _sheet = null!;
+    private readonly Dictionary<string, IXLRange> _fields = new();
 }
 
-class ExcelCellComparer : IComparer<ExcelCellAddress>
-{
-    public int Compare(ExcelCellAddress x, ExcelCellAddress y)
-    {
-        if (ReferenceEquals(x, y)) return 0;
-        if (ReferenceEquals(null, y)) return 1;
-        if (ReferenceEquals(null, x)) return -1;
-        var rowComparison = x.Row.CompareTo(y.Row);
-        if (rowComparison != 0) return rowComparison;
-        return x.Column.CompareTo(y.Column);
-    }
-}
+
